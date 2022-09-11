@@ -245,3 +245,71 @@ class TFDownsample2DTest(unittest.TestCase):
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+
+class TFFirTest(unittest.TestCase):
+
+    # TODO: remove once higher level tests pass
+    def test_upfirdn2d_native(self):
+
+        from diffusers.models.tf_resnet import upfirdn2d_native as tf_upfirdn2d_native
+
+        tf.random.set_seed(0)
+        N, H, W, C = (1, 16, 16, 3)
+        K0, K1 = (3, 3)
+        sample = tf.random.normal(shape=(N, H, W, C))
+        kernel = tf.random.normal(shape=(K0, K1))
+        up = 1
+        down = 1
+        pad = (0, 0)
+
+        tf_inputs = {"input": sample, "kernel": kernel, "up": up, "down": down, "pad": pad}
+        tf_inputs = {k: tf.constant(v, dtype=tf.float32) if isinstance(v, np.ndarray) else v for k, v in tf_inputs.items()}
+
+        output = tf_upfirdn2d_native(**tf_inputs)
+
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [-5.128561, -4.720215, 3.5403748],
+                [3.5484822, -2.7563298, 0.37529594],
+                [0.6663396, -2.983273, -1.3901749],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+    def test_pt_tf_upfirdn2d_native(self):
+
+        from diffusers.models.resnet import upfirdn2d_native
+        from diffusers.models.tf_resnet import upfirdn2d_native as tf_upfirdn2d_native
+
+        N, H, W, C = (1, 16, 16, 3)
+        K0, K1 = (3, 3)
+        sample = np.random.default_rng().standard_normal(size=(N, H, W, C), dtype=np.float32)
+        kernel = np.random.default_rng().standard_normal(size=(K0, K1), dtype=np.float32)
+
+        up_down_to_test = [(1, 1), (1, 2)]
+        pads_to_test = [(0, 0), (1, 1), (1, 2)]
+
+        for up, down in up_down_to_test:
+
+            for pad in pads_to_test:
+
+                pt_inputs = {"input": sample, "kernel": kernel, "up": up, "down": down, "pad": pad}
+                tf_inputs = {"input": sample, "kernel": kernel, "up": up, "down": down, "pad": pad}
+
+                pt_inputs = {k: torch.tensor(v, dtype=torch.float32) if isinstance(v, np.ndarray) else v for k, v in pt_inputs.items()}
+                tf_inputs = {k: tf.constant(v, dtype=tf.float32) if isinstance(v, np.ndarray) else v for k, v in tf_inputs.items()}
+
+                # (N, H, W, C) -> (N, C, H, W) for PT
+                pt_inputs["input"] = torch.permute(pt_inputs["input"], dims=(0, 3, 1, 2))
+
+                pt_output = upfirdn2d_native(**pt_inputs)
+                tf_output = tf_upfirdn2d_native(**tf_inputs)
+                # (N, H, W, C) -> (N, C, H, W)
+                tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+                max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+                assert max_diff < 1e-6

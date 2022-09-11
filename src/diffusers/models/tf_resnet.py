@@ -171,3 +171,87 @@ class TFDownsample2D(tf.keras.layers.Layer):
         assert x.shape[-1] == self.out_channels
 
         return x
+
+
+# ======================================================================================================================
+# Wrappers which have the corresponding entries in `resnet.py`
+
+
+def upfirdn2d_native(input, kernel, up=1, down=1, pad=(0, 0)):
+
+    return _upfirdn_2d_ref(
+        input, kernel, upx=up, upy=up, downx=down, downy=down, padx0=pad[0], padx1=pad[1], pady0=pad[0], pady1=pad[1]
+    )
+
+# ======================================================================================================================
+# Copied from https://github.com/NVlabs/stylegan2/blob/master/dnnlib/tflib/ops/upfirdn_2d.py with modifications.
+
+
+# Copied from https://github.com/NVlabs/stylegan2/blob/bf0fe0baba9fc7039eae0cac575c1778be1ce3e3/dnnlib/tflib/ops/upfirdn_2d.py#L66
+def _upfirdn_2d_ref(x, k, upx, upy, downx, downy, padx0, padx1, pady0, pady1):
+    """Slow reference implementation of `upfirdn_2d()` using standard TensorFlow ops.
+
+    Some modifications:
+      - some numpy operation are (or will be) replaced by TF ops
+      - remove `.value` from tensor shape, i.e. `x.shape[1].value -> x.shape[1]`
+
+    TODO: (ydshieh) Understand FIR filtering.
+
+    For argument meanings, check https://github.com/NVlabs/stylegan2/blob/bf0fe0baba9fc7039eae0cac575c1778be1ce3e3/dnnlib/tflib/ops/upfirdn_2d.py#L19
+    """
+
+    # Input `x` expect (N, H, W, C) format.
+    x = tf.convert_to_tensor(x)
+    k = tf.constant(k, dtype=tf.float32)
+    assert x.shape.rank == 4
+    inH = x.shape[1]
+    inW = x.shape[2]
+    minorDim = _shape(x, 3)
+    kernelH, kernelW = k.shape
+    assert inW >= 1 and inH >= 1
+    assert kernelW >= 1 and kernelH >= 1
+    assert isinstance(upx, int) and isinstance(upy, int)
+    assert isinstance(downx, int) and isinstance(downy, int)
+    assert isinstance(padx0, int) and isinstance(padx1, int)
+    assert isinstance(pady0, int) and isinstance(pady1, int)
+
+    # Upsample (insert zeros).
+    x = tf.reshape(x, [-1, inH, 1, inW, 1, minorDim])
+    x = tf.pad(x, [[0, 0], [0, 0], [0, upy - 1], [0, 0], [0, upx - 1], [0, 0]])
+    x = tf.reshape(x, [-1, inH * upy, inW * upx, minorDim])
+
+    # Pad (crop if negative).
+    x = tf.pad(x, [[0, 0], [max(pady0, 0), max(pady1, 0)], [max(padx0, 0), max(padx1, 0)], [0, 0]])
+    x = x[:, max(-pady0, 0) : x.shape[1] - max(-pady1, 0), max(-padx0, 0) : x.shape[2] - max(-padx1, 0), :]
+
+    # Convolve with filter.
+    # (N, C, H, W)
+    x = tf.transpose(x, [0, 3, 1, 2])
+
+    # --------------------------------------------------------------------------------
+    # Original implementation uses (N * C, 1, H, W)
+    # x = tf.reshape(x, [-1, 1, inH * upy + pady0 + pady1, inW * upx + padx0 + padx1])
+
+    # Here we use (N * C, H, W, 1) so it could run on CPU with `tf.nn.conv2d`
+    x = tf.reshape(x, [-1, inH * upy + pady0 + pady1, inW * upx + padx0 + padx1, 1])
+    # --------------------------------------------------------------------------------
+
+    w = tf.constant(k[::-1, ::-1, tf.newaxis, tf.newaxis], dtype=x.dtype)
+
+    # Original implementation uses `NCHW` here.
+    x = tf.nn.conv2d(x, w, strides=[1, 1, 1, 1], padding='VALID', data_format='NHWC')
+
+    x = tf.reshape(x, [-1, minorDim, inH * upy + pady0 + pady1 - kernelH + 1, inW * upx + padx0 + padx1 - kernelW + 1])
+    x = tf.transpose(x, [0, 2, 3, 1])
+
+    # Downsample (throw away pixels).
+    return x[:, ::downy, ::downx, :]
+
+
+# Copied from https://github.com/NVlabs/stylegan2/blob/bf0fe0baba9fc7039eae0cac575c1778be1ce3e3/dnnlib/tflib/ops/upfirdn_2d.py#L337
+def _shape(tf_expr, dim_idx):
+    if tf_expr.shape.rank is not None:
+        dim = tf_expr.shape[dim_idx]
+        if dim is not None:
+            return dim
+    return tf.shape(tf_expr)[dim_idx]
