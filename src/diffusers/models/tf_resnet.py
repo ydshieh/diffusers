@@ -181,6 +181,74 @@ class TFDownsample2D(tf.keras.layers.Layer):
         return x
 
 
+# def upsample_2d(x, kernel=None, factor=2, gain=1):
+#     r"""Upsample2D a batch of 2D images with the given filter.
+#
+#     Args:
+#     Accepts a batch of 2D images of the shape `[N, C, H, W]` or `[N, H, W, C]` and upsamples each image with the given
+#     filter. The filter is normalized so that if the input pixels are constant, they will be scaled by the specified
+#     `gain`. Pixels outside the image are assumed to be zero, and the filter is padded with zeros so that its shape is a:
+#     multiple of the upsampling factor.
+#         x: Input tensor of the shape `[N, C, H, W]` or `[N, H, W,
+#           C]`.
+#         k: FIR filter of the shape `[firH, firW]` or `[firN]`
+#           (separable). The default is `[1] * factor`, which corresponds to nearest-neighbor upsampling.
+#         factor: Integer upsampling factor (default: 2). gain: Scaling factor for signal magnitude (default: 1.0).
+#
+#     Returns:
+#         Tensor of the shape `[N, C, H * factor, W * factor]`
+#     """
+#     assert isinstance(factor, int) and factor >= 1
+#     if kernel is None:
+#         kernel = [1] * factor
+#
+#     kernel = np.asarray(kernel, dtype=np.float32)
+#     if kernel.ndim == 1:
+#         kernel = np.outer(kernel, kernel)
+#     kernel /= np.sum(kernel)
+#
+#     kernel = kernel * (gain * (factor**2))
+#     p = kernel.shape[0] - factor
+#     return upfirdn2d_native(
+#         x, torch.tensor(kernel, device=x.device), up=factor, pad=((p + 1) // 2 + factor - 1, p // 2)
+#     )
+
+
+def upsample_2d(x, kernel=None, factor=2, gain=1):
+    r"""Upsample2D a batch of 2D images with the given filter.
+
+    Args:
+    Accepts a batch of 2D images of the shape `[N, C, H, W]` or `[N, H, W, C]` and upsamples each image with the given
+    filter. The filter is normalized so that if the input pixels are constant, they will be scaled by the specified
+    `gain`. Pixels outside the image are assumed to be zero, and the filter is padded with zeros so that its shape is a:
+    multiple of the upsampling factor.
+        x: Input tensor of the shape `[N, C, H, W]` or `[N, H, W,
+          C]`.
+        k: FIR filter of the shape `[firH, firW]` or `[firN]`
+          (separable). The default is `[1] * factor`, which corresponds to nearest-neighbor upsampling.
+        factor: Integer upsampling factor (default: 2). gain: Scaling factor for signal magnitude (default: 1.0).
+
+    The original TF implementation: https://github.com/NVlabs/stylegan2/blob/bf0fe0baba9fc7039eae0cac575c1778be1ce3e3/dnnlib/tflib/ops/upfirdn_2d.py#L169
+
+    Returns:
+        Tensor of the shape `[N, C, H * factor, W * factor]`
+    """
+    assert isinstance(factor, int) and factor >= 1
+    if kernel is None:
+        kernel = [1] * factor
+
+    kernel = tf.constant(kernel, dtype=tf.float32)
+    if tf.rank(kernel) == 1:
+        kernel = tf.tensordot(kernel, kernel, axes=0)
+    kernel = kernel / tf.reduce_sum(kernel)
+
+    kernel = kernel * (gain * (factor**2))
+    p = kernel.shape[0] - factor
+    return upfirdn2d_native(
+        x, kernel, up=factor, pad=((p + 1) // 2 + factor - 1, p // 2)
+    )
+
+
 # ======================================================================================================================
 # Wrappers which have the corresponding entries in `resnet.py`
 
