@@ -2,6 +2,12 @@ import tensorflow as tf
 
 
 class SimpleConv2DTransposeWithExplicitPadding(tf.keras.layers.Layer):
+    """Padding in `tf.keras.layers.Conv2DTranspose` or `tf.nn.conv2d_transpose` is special, and manual padding
+    before calling these layers (for explicit padding) will give different result from that given by specifying
+    padding in these layers.
+
+    Therefore, this custom layer uses `tf.nn.conv2d_transpose`, and pass explicit padding to it.
+    """
 
     def __init__(
         self,
@@ -80,9 +86,11 @@ class TFUpsample2D(tf.keras.layers.Layer):
 
         conv = None
         if use_conv_transpose:
+            # `Conv2DTranspose` requires different hacks (than `Conv2DTranspose`) for explicit padding number.
+            # (We can't pad manually before calling this layer, as the result will be different)
             conv = SimpleConv2DTransposeWithExplicitPadding(filters=self.out_channels, kernel_size=(4, 4), strides=(2, 2), padding=(1, 1), name=_conv_name)
         elif use_conv:
-            # Need to pad manually in Keras Conv2D layers for explicit padding number.
+            # Need to pad manually in call() before calling self.conv() for explicit padding number.
             conv = tf.keras.layers.Conv2D(self.out_channels, kernel_size=3, padding="valid", name=_conv_name)
 
         # TODO: clean up after PyTorch side is done
