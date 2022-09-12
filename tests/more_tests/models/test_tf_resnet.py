@@ -287,7 +287,7 @@ class TFFirTest(unittest.TestCase):
 
         N, H, W, C = (1, 16, 16, 3)
         K0, K1 = (3, 3)
-        sample = np.random.default_rng().standard_normal(size=(N, H, W, C), dtype=np.float32)
+        sample = np.random.default_rng().standard_normal(size=(N, C, H, W), dtype=np.float32)
         kernel = np.random.default_rng().standard_normal(size=(K0, K1), dtype=np.float32)
 
         up_down_to_test = [(1, 1), (1, 2)]
@@ -303,8 +303,8 @@ class TFFirTest(unittest.TestCase):
                 pt_inputs = {k: torch.tensor(v, dtype=torch.float32) if isinstance(v, np.ndarray) else v for k, v in pt_inputs.items()}
                 tf_inputs = {k: tf.constant(v, dtype=tf.float32) if isinstance(v, np.ndarray) else v for k, v in tf_inputs.items()}
 
-                # (N, H, W, C) -> (N, C, H, W) for PT
-                pt_inputs["input"] = torch.permute(pt_inputs["input"], dims=(0, 3, 1, 2))
+                # (N, C, H, W) -> (N, H, W, C) for TF
+                tf_inputs["input"] = tf.transpose(tf_inputs["input"], perm=(0, 2, 3, 1))
 
                 pt_output = upfirdn2d_native(**pt_inputs)
                 tf_output = tf_upfirdn2d_native(**tf_inputs)
