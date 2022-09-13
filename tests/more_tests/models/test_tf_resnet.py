@@ -426,3 +426,100 @@ class TFFirTest(unittest.TestCase):
         tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+    def test_downsample_2d(self):
+
+        from diffusers.models.tf_resnet import downsample_2d as tf_downsample_2d
+
+        tf.random.set_seed(0)
+        N, H, W, C = (1, 32, 32, 3)
+        K0, K1 = (3, 3)
+        sample = tf.random.normal(shape=(N, H, W, C))
+        kernel = tf.random.normal(shape=(K0, K1))
+
+        # check with defaults
+        output = tf_downsample_2d(sample, kernel=None)
+        assert output.shape == (N, H // 2, W // 2, C)
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [-0.01057184, -0.1050401, 0.10744253],
+                [ 0.5084425, 0.25627035, -0.877445],
+                [-0.18831787, -0.14461315, 0.13966256],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+        # check with factor = 3
+        factor = 3
+        output = tf_downsample_2d(sample, kernel=None, factor=factor)
+        assert output.shape == (N, H // factor, W // factor, C)
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [3.7484446e-01, -2.5557938e-01, -6.5304033e-02],
+                [3.7692755e-01, 3.7176535e-05, 1.3446024e-01],
+                [-2.0504236e-01, 9.0178549e-02, 2.8782129e-01],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+        # check with explicit `kernel`
+        output = tf_downsample_2d(sample, kernel=kernel)
+        assert output.shape == (N, H // 2, W // 2, C)
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [-5.600157, 7.580162, -7.9246755],
+                [10.4908085, -1.410429, 1.7640928],
+                [-2.453312, -3.5338497, 0.4914587],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+    def test_pt_tf_downsample_2d(self):
+
+        from diffusers.models.resnet import downsample_2d
+        from diffusers.models.tf_resnet import downsample_2d as tf_downsample_2d
+
+        N, H, W, C = (1, 32, 32, 3)
+        K0, K1 = (3, 3)
+        sample = np.random.default_rng().standard_normal(size=(N, C, H, W), dtype=np.float32)
+        kernel = np.random.default_rng().standard_normal(size=(K0, K1), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        pt_kernel = kernel
+        tf_kernel = tf.constant(kernel)
+
+        # check with defaults
+        pt_output = downsample_2d(pt_sample, kernel=None)
+        tf_output = tf_downsample_2d(tf_sample, kernel=None)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+        # check with factor =downsample_2d 3
+        pt_output = downsample_2d(pt_sample, kernel=None, factor=3)
+        tf_output = tf_downsample_2d(tf_sample, kernel=None, factor=3)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+        # check with explicit `kernel`
+        pt_output = downsample_2d(pt_sample, kernel=pt_kernel)
+        tf_output = tf_downsample_2d(tf_sample, kernel=tf_kernel)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
