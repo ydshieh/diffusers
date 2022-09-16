@@ -3,8 +3,8 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.tf_resnet import TFUpsample2D, TFDownsample2D, TFFirUpsample2D
-from diffusers.models.resnet import Upsample2D, Downsample2D, FirUpsample2D
+from diffusers.models.tf_resnet import TFUpsample2D, TFDownsample2D, TFFirUpsample2D, TFFirDownsample2D
+from diffusers.models.resnet import Upsample2D, Downsample2D, FirUpsample2D, FirDownsample2D
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -539,14 +539,14 @@ class TFFirUpsample2DTest(unittest.TestCase):
         output_slice = output[0, -3:, -3:, -1]
         expected_slice = tf.constant(
             [
-                [-0.5779555, -0.46531677, 0.01123914],
-                [-0.18219061, -0.21603137, 0.11068934],
-                [0.27656645, 0.06588552, -0.04983421],
+                [-0.48175848, -0.33078414, -0.19147274],
+                [-0.46467274, 0.3448532, 0.5622121],
+                [-0.3420974, 0.5120039, 0.70429087],
             ],
             dtype=tf.float32
         )
         max_diff = np.amax(np.abs(output_slice - expected_slice))
-        # assert max_diff < 1e-6
+        assert max_diff < 1e-6
 
     def test_with_conv(self):
         tf.random.set_seed(0)
@@ -610,6 +610,110 @@ class TFFirUpsample2DTest(unittest.TestCase):
 
         pt_layer = FirUpsample2D(channels=C, out_channels=out_C, use_conv=True)
         tf_layer = TFFirUpsample2D(out_channels=out_C, use_conv=True)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample)
+        tf_output = tf_layer(tf_sample)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+
+class TFFirDownsample2DTest(unittest.TestCase):
+
+    def test_default(self):
+        tf.random.set_seed(0)
+        N, H, W, C = (1, 32, 32, 3)
+        sample = tf.random.normal(shape=(N, H, W, C))
+        layer = TFFirDownsample2D(use_conv=False)
+        output = layer(sample)
+
+        assert output.shape == (N, H // 2, W // 2, C)
+
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [-0.12315781, -0.11423445, 0.00152066],
+                [0.25104553, 0.10429873, -0.4266413],
+                [-0.02045484, 0.01432847, 0.07339813],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+    def test_with_conv(self):
+        tf.random.set_seed(0)
+        N, H, W, C = (1, 32, 32, 3)
+        out_C = 5
+        sample = tf.random.normal(shape=(N, H, W, C))
+        layer = TFFirDownsample2D(out_channels=out_C, use_conv=True)
+        output = layer(sample)
+
+        assert output.shape == (N, H // 2, W // 2, out_C)
+
+        output_slice = output[0, -3:, -3:, -1]
+        expected_slice = tf.constant(
+            [
+                [0.14284192, -0.02286262, 0.13295601],
+                [0.21965423, -0.22582096, -0.13607837],
+                [-0.07344813, -0.19338597, -0.1325784 ],
+            ],
+            dtype=tf.float32
+        )
+        max_diff = np.amax(np.abs(output_slice - expected_slice))
+        assert max_diff < 1e-6
+
+    def test_pt_tf_default(self):
+        N, H, W, C = (1, 32, 32, 3)
+        out_C = C
+        sample = np.random.normal(size=(N, C, H, W))
+
+        pt_sample = torch.tensor(sample)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        pt_layer = FirDownsample2D(channels=C, out_channels=out_C, use_conv=False)
+        tf_layer = TFFirDownsample2D(out_channels=out_C, use_conv=False)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample)
+        tf_output = tf_layer(tf_sample)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+    def test_pt_tf_default(self):
+        N, H, W, C = (1, 32, 32, 3)
+        out_C = 5
+        sample = np.random.normal(size=(N, C, H, W))
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        pt_layer = FirDownsample2D(channels=C, out_channels=out_C, use_conv=True)
+        tf_layer = TFFirDownsample2D(out_channels=out_C, use_conv=True)
 
         # init. TF weights
         _ = tf_layer(tf_sample)

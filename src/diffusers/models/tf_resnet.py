@@ -283,6 +283,94 @@ class TFFirUpsample2D(tf.keras.layers.Layer):
         return height
 
 
+class TFFirDownsample2D(tf.keras.layers.Layer):
+
+    def __init__(self, channels=None, out_channels=None, use_conv=False, fir_kernel=(1, 3, 3, 1)):
+        super().__init__()
+        out_channels = out_channels if out_channels else channels
+        if use_conv:
+            # manual padding in self.call()
+            self.Conv2d_0 = tf.keras.layers.Conv2D(filters=out_channels, kernel_size=3, strides=1, padding="VALID", name="Conv2d_0")
+        self.use_conv = use_conv
+        self.fir_kernel = fir_kernel
+        self.out_channels = out_channels
+
+    def _downsample_2d(self, x, weight=None, kernel=None, factor=2, gain=1):
+        """Fused `Conv2d()` followed by `downsample_2d()`.
+
+        Args:
+        Padding is performed only once at the beginning, not between the operations. The fused op is considerably more
+        efficient than performing the same calculation using standard TensorFlow ops. It supports gradients of arbitrary:
+        order.
+            x: Input tensor of the shape `[N, C, H, W]` or `[N, H, W, C]`. w: Weight tensor of the shape `[filterH,
+            filterW, inChannels, outChannels]`. Grouped convolution can be performed by `inChannels = x.shape[0] //
+            numGroups`. k: FIR filter of the shape `[firH, firW]` or `[firN]` (separable). The default is `[1] *
+            factor`, which corresponds to average pooling. factor: Integer downsampling factor (default: 2). gain:
+            Scaling factor for signal magnitude (default: 1.0).
+
+        The original TF implementation: https://github.com/NVlabs/stylegan2/blob/bf0fe0baba9fc7039eae0cac575c1778be1ce3e3/dnnlib/tflib/ops/upfirdn_2d.py#L296
+
+        Returns:
+            Tensor of the shape `[N, C, H // factor, W // factor]` or `[N, H // factor, W // factor, C]`, and same
+            datatype as `x`.
+        """
+
+        assert isinstance(factor, int) and factor >= 1
+
+        # Setup filter kernel.
+        if kernel is None:
+            kernel = [1] * factor
+
+        # setup kernel
+        kernel = tf.constant(kernel, dtype=tf.float32)
+        if tf.rank(kernel) == 1:
+            kernel = tf.tensordot(kernel, kernel, axes=0)
+        kernel = kernel / tf.reduce_sum(kernel)
+
+        kernel = kernel * gain
+
+        if self.use_conv:
+            # `weight` shape: [K_H, K_W, K_C_in, C_out]
+
+            # `weight` could be `ResourceVariable`
+            assert weight.shape.rank == 4
+
+            convH = weight.shape[0]
+            convW = weight.shape[1]
+            assert convW == convH
+
+            p = (kernel.shape[0] - factor) + (convW - 1)
+
+            # (N, H, W, C)
+            # Determine data dimensions.
+            stride = [1, factor, factor, 1]
+
+            x = upfirdn2d_native(x, kernel, pad=((p + 1) // 2, p // 2))
+            x = tf.nn.conv2d(x, weight, strides=stride, padding='VALID', data_format="NHWC")
+        else:
+            p = kernel.shape[0] - factor
+            x = upfirdn2d_native(
+                x, kernel, down=factor, pad=((p + 1) // 2, p // 2)
+            )
+
+        return x
+
+    def build(self, input_shape):
+
+        if self.use_conv:
+            sample = tf.random.normal(shape=input_shape, dtype=tf.float32)
+            self.Conv2d_0(sample)
+
+    def call(self, x):
+        if self.use_conv:
+            x = self._downsample_2d(x, self.Conv2d_0.kernel, kernel=self.fir_kernel)
+            x = x + self.Conv2d_0.bias
+        else:
+            x = self._downsample_2d(x, kernel=self.fir_kernel, factor=2)
+
+        return x
+
+
 def upsample_2d(x, kernel=None, factor=2, gain=1):
     r"""Upsample2D a batch of 2D images with the given filter.
 
