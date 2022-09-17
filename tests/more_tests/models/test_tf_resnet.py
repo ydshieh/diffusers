@@ -1,10 +1,11 @@
+import itertools
 import numpy as np
 import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.tf_resnet import TFUpsample2D, TFDownsample2D, TFFirUpsample2D, TFFirDownsample2D
-from diffusers.models.resnet import Upsample2D, Downsample2D, FirUpsample2D, FirDownsample2D
+from diffusers.models.tf_resnet import TFUpsample2D, TFDownsample2D, TFFirUpsample2D, TFFirDownsample2D, TFGroupNormalization, TFResnetBlock2D
+from diffusers.models.resnet import Upsample2D, Downsample2D, FirUpsample2D, FirDownsample2D, ResnetBlock2D
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -731,3 +732,142 @@ class TFFirDownsample2DTest(unittest.TestCase):
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+
+class TFGroupNormalizationTest(unittest.TestCase):
+
+    def test_default(self):
+        tf.random.set_seed(0)
+        N, H, W, C = (1, 16, 16, 4)
+        sample = tf.random.normal(shape=(N, H, W, C))
+
+        all_num_groups = [1, C // 2, C]
+        for groups in all_num_groups:
+
+            layer = TFGroupNormalization(groups=groups, epsilon=1e-5)
+            output = layer(sample)
+
+            assert output.shape == (N, H, W, C)
+
+            if groups == C:
+                output_slice = output[0, -3:, -3:, -1]
+                expected_slice = tf.constant(
+                    [
+                        [-1.8358996, 0.54756016, -0.00880986],
+                        [0.9807491, 0.11368423, -1.4105656],
+                        [-0.43764484, -0.5612552, -0.81363803],
+                    ],
+                    dtype=tf.float32
+                )
+                max_diff = np.amax(np.abs(output_slice - expected_slice))
+                assert max_diff < 1e-6
+
+    def test_pt_tf_default(self):
+
+        from torch.nn import GroupNorm
+
+        N, H, W, C = (1, 16, 16, 4)
+        sample = np.random.normal(size=(N, C, H, W))
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        all_num_groups = [1, C // 2, C]
+        for groups in all_num_groups:
+
+            pt_layer = GroupNorm(num_groups=groups, num_channels=C, eps=1e-5)
+            tf_layer = TFGroupNormalization(groups=groups, epsilon=1e-5)
+
+            # init. TF weights
+            _ = tf_layer(tf_sample)
+            # Load PT weights
+            tf_layer.base_model_prefix = ""
+            tf_layer._keys_to_ignore_on_load_missing = []
+            tf_layer._keys_to_ignore_on_load_unexpected = []
+            load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+            with torch.no_grad():
+                pt_output = pt_layer(pt_sample)
+            tf_output = tf_layer(tf_sample)
+            # (N, H, W, C) -> (N, C, H, W)
+            tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+            max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+            assert max_diff < 1e-6
+
+
+class TFResnetBlock2DTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+
+        N, H, W, C = (1, 16, 16, 4)
+        out_C = 6
+        sample = np.random.normal(size=(N, C, H, W))
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        all_options = {
+            "in_channels": [C],
+            "out_channels": [None, C, out_C],
+            "conv_shortcut": [False, True],
+            "temb_channels": [None, 8],
+            "groups": [1, C // 2, C],
+            "non_linearity": ["swish", "mish", "silu"],
+            # TODO: Add different values once available
+            "time_embedding_norm": ["default"],
+            # TODO: Add "sde_vp" once available in TF
+            "kernel": [None, "fir", "sde_vp"],
+            "use_in_shortcut": [None, False, True],
+            "up": [False, True],
+            "down": [False, True],
+        }
+        keys = list(all_options.keys())
+        values = [all_options[k] for k in keys]
+
+        for options in itertools.product(*values):
+
+            configs = {k: v for k, v in zip(keys, options)}
+            out_channels = configs["out_channels"]
+            groups = configs["groups"]
+
+            # This gives an error for both PT/TF
+            # TODO: Better error message
+            if configs["use_in_shortcut"] is False and configs["out_channels"] != configs["in_channels"]:
+                continue
+
+            # depends on `out_channels`
+            if out_channels is not None:
+                if out_channels % groups == 0:
+                    all_groups_out = [None, 1, groups, out_channels // 2, out_channels]
+                else:
+                    all_groups_out = [1, out_channels // 2, out_channels]
+            else:
+                all_groups_out = [None, 1, C // 2, C]
+
+            for groups_out in all_groups_out:
+
+                temb = None
+
+                pt_layer = ResnetBlock2D(**configs, groups_out=groups_out)
+                tf_layer = TFResnetBlock2D(**configs, groups_out=groups_out)
+
+                # init. TF weights
+                _ = tf_layer(tf_sample, temb=temb)
+                # Load PT weights
+                tf_layer.base_model_prefix = ""
+                tf_layer._keys_to_ignore_on_load_missing = []
+                tf_layer._keys_to_ignore_on_load_unexpected = []
+                load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+                with torch.no_grad():
+                    pt_output = pt_layer(pt_sample, temb=temb)
+                tf_output = tf_layer(tf_sample, temb=temb)
+
+                # (N, H, W, C) -> (N, C, H, W)
+                tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+                max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+                assert max_diff < 5e-6
