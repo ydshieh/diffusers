@@ -4,7 +4,7 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.tf_resnet import TFUpsample2D, TFDownsample2D, TFFirUpsample2D, TFFirDownsample2D, TFGroupNormalization, TFResnetBlock2D
+from diffusers.models.resnet_tf import TFUpsample2D, TFDownsample2D, TFFirUpsample2D, TFFirDownsample2D, TFGroupNormalization, TFResnetBlock2D
 from diffusers.models.resnet import Upsample2D, Downsample2D, FirUpsample2D, FirDownsample2D, ResnetBlock2D
 
 from transformers import load_pytorch_model_in_tf2_model
@@ -253,7 +253,7 @@ class TFFirTest(unittest.TestCase):
     # TODO: remove once higher level tests pass
     def test_upfirdn2d_native(self):
 
-        from diffusers.models.tf_resnet import upfirdn2d_native as tf_upfirdn2d_native
+        from diffusers.models.resnet_tf import upfirdn2d_native as tf_upfirdn2d_native
 
         tf.random.set_seed(0)
         N, H, W, C = (1, 16, 16, 3)
@@ -284,7 +284,7 @@ class TFFirTest(unittest.TestCase):
     def test_pt_tf_upfirdn2d_native(self):
 
         from diffusers.models.resnet import upfirdn2d_native
-        from diffusers.models.tf_resnet import upfirdn2d_native as tf_upfirdn2d_native
+        from diffusers.models.resnet_tf import upfirdn2d_native as tf_upfirdn2d_native
 
         N, H, W, C = (1, 16, 16, 3)
         K0, K1 = (3, 3)
@@ -317,7 +317,7 @@ class TFFirTest(unittest.TestCase):
 
     def test_upsample_2d(self):
 
-        from diffusers.models.tf_resnet import upsample_2d as tf_upsample_2d
+        from diffusers.models.resnet_tf import upsample_2d as tf_upsample_2d
 
         tf.random.set_seed(0)
         N, H, W, C = (1, 16, 16, 3)
@@ -390,7 +390,7 @@ class TFFirTest(unittest.TestCase):
     def test_pt_tf_upsample_2d(self):
 
         from diffusers.models.resnet import upsample_2d
-        from diffusers.models.tf_resnet import upsample_2d as tf_upsample_2d
+        from diffusers.models.resnet_tf import upsample_2d as tf_upsample_2d
 
         N, H, W, C = (1, 16, 16, 3)
         K0, K1 = (3, 3)
@@ -430,7 +430,7 @@ class TFFirTest(unittest.TestCase):
 
     def test_downsample_2d(self):
 
-        from diffusers.models.tf_resnet import downsample_2d as tf_downsample_2d
+        from diffusers.models.resnet_tf import downsample_2d as tf_downsample_2d
 
         tf.random.set_seed(0)
         N, H, W, C = (1, 32, 32, 3)
@@ -487,7 +487,7 @@ class TFFirTest(unittest.TestCase):
     def test_pt_tf_downsample_2d(self):
 
         from diffusers.models.resnet import downsample_2d
-        from diffusers.models.tf_resnet import downsample_2d as tf_downsample_2d
+        from diffusers.models.resnet_tf import downsample_2d as tf_downsample_2d
 
         N, H, W, C = (1, 32, 32, 3)
         K0, K1 = (3, 3)
@@ -576,7 +576,7 @@ class TFFirUpsample2DTest(unittest.TestCase):
         out_C = C
         sample = np.random.normal(size=(N, C, H, W))
 
-        pt_sample = torch.tensor(sample)
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
         # (N, C, H, W) -> (N, H, W, C) for TF
         tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
 
@@ -600,7 +600,7 @@ class TFFirUpsample2DTest(unittest.TestCase):
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
 
-    def test_pt_tf_default(self):
+    def test_pt_tf_with_conv(self):
         N, H, W, C = (1, 16, 16, 3)
         out_C = 5
         sample = np.random.normal(size=(N, C, H, W))
@@ -680,7 +680,7 @@ class TFFirDownsample2DTest(unittest.TestCase):
         out_C = C
         sample = np.random.normal(size=(N, C, H, W))
 
-        pt_sample = torch.tensor(sample)
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
         # (N, C, H, W) -> (N, H, W, C) for TF
         tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
 
@@ -704,7 +704,7 @@ class TFFirDownsample2DTest(unittest.TestCase):
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
 
-    def test_pt_tf_default(self):
+    def test_pt_tf_with_conv(self):
         N, H, W, C = (1, 32, 32, 3)
         out_C = 5
         sample = np.random.normal(size=(N, C, H, W))
