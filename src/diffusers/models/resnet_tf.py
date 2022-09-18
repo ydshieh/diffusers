@@ -364,7 +364,7 @@ class TFDownsample2D(tf.keras.layers.Layer):
                  downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv=False, padding=1, out_channels=None, _conv_name="conv", **kwargs):
+    def __init__(self, channels, use_conv=False, padding=1, out_channels=None, **kwargs):
         super().__init__(**kwargs)
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -372,20 +372,16 @@ class TFDownsample2D(tf.keras.layers.Layer):
         self.padding = padding
         stride = 2
 
-        # TODO: clean up after PyTorch side is done
-        if _conv_name == "Conv2d_0":
-            _conv_name = "conv"
-
         if use_conv:
             # manual padding in self.call()
-            conv = tf.keras.layers.Conv2D(self.out_channels, kernel_size=3, strides=stride, padding="valid", name=_conv_name)
+            conv = tf.keras.layers.Conv2D(self.out_channels, kernel_size=3, strides=stride, padding="valid", name="conv")
         else:
             assert self.channels == self.out_channels
             conv = tf.keras.layers.AveragePooling2D(
                 pool_size=stride,
                 strides=stride,
                 padding='valid',
-                name=_conv_name,
+                name="conv",
             )
 
         self.conv = conv
@@ -710,7 +706,8 @@ class TFResnetBlock2D(tf.keras.layers.Layer):
         hidden_states = self.conv1(hidden_states)
 
         if temb is not None:
-            temb = self.time_emb_proj(self.nonlinearity(temb))[:, :, tf.newaxis, tf.newaxis]
+            # (N, C) -> (N, H, W, C)
+            temb = self.time_emb_proj(self.nonlinearity(temb))
             hidden_states = hidden_states + temb
 
         # make sure hidden states is in float32
