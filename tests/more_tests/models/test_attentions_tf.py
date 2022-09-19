@@ -3,8 +3,8 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.attention_tf import TFGEGLU, TFFeedForward, TFAttentionBlock, TFCrossAttention
-from diffusers.models.attention import GEGLU, FeedForward, AttentionBlock, CrossAttention
+from diffusers.models.attention_tf import TFGEGLU, TFFeedForward, TFAttentionBlock, TFCrossAttention, TFBasicTransformerBlock
+from diffusers.models.attention import GEGLU, FeedForward, AttentionBlock, CrossAttention, BasicTransformerBlock
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -126,11 +126,38 @@ class TFCrossAttentionTest(unittest.TestCase):
         tf_layer.base_model_prefix = ""
         tf_layer._keys_to_ignore_on_load_missing = []
         tf_layer._keys_to_ignore_on_load_unexpected = []
-        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+        # TODO: Clean up
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs={"hidden_states": tf_sample, "context": tf_context}, allow_missing_keys=False)
 
         with torch.no_grad():
             pt_output = pt_layer(pt_sample, context=pt_context)
         tf_output = tf_layer(tf_sample, context=tf_context)
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+    def test_pt_tf_default_without_context(self):
+        N, T_query, T_context, query_dim, context_dim, heads, dim_head = (1, 5, 3, 8, None, 2, 8)
+
+        sample = np.random.default_rng().standard_normal(size=(N, T_query, query_dim), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        tf_sample = tf.constant(sample)
+
+        pt_layer = CrossAttention(query_dim=query_dim, context_dim=context_dim, heads=heads, dim_head=dim_head)
+        tf_layer = TFCrossAttention(query_dim=query_dim, context_dim=context_dim, heads=heads, dim_head=dim_head)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample, context=None)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample, context=None)
+        tf_output = tf_layer(tf_sample, context=None)
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
@@ -160,7 +187,42 @@ class TFCrossAttentionTest(unittest.TestCase):
         tf_layer.base_model_prefix = ""
         tf_layer._keys_to_ignore_on_load_missing = []
         tf_layer._keys_to_ignore_on_load_unexpected = []
-        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+        # TODO: Clean up
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs={"hidden_states": tf_sample, "context": tf_context}, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample, context=pt_context)
+        tf_output = tf_layer(tf_sample, context=tf_context)
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+
+class TFBasicTransformerBlockTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+        N, T_query, T_context, dim, context_dim, heads, dim_head = (1, 5, 3, 8, 4, 2, 8)
+
+        sample = np.random.default_rng().standard_normal(size=(N, T_query, dim), dtype=np.float32)
+        context = np.random.default_rng().standard_normal(size=(N, T_context, context_dim), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        tf_sample = tf.constant(sample)
+
+        pt_context = torch.tensor(context, dtype=torch.float32)
+        tf_context = tf.constant(context)
+
+        pt_layer = BasicTransformerBlock(dim=dim, context_dim=context_dim, n_heads=heads, d_head=dim_head)
+        tf_layer = TFBasicTransformerBlock(dim=dim, context_dim=context_dim, n_heads=heads, d_head=dim_head)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample, context=tf_context)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        # TODO: Clean up
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs={"hidden_states": tf_sample, "context": tf_context}, allow_missing_keys=False)
 
         with torch.no_grad():
             pt_output = pt_layer(pt_sample, context=pt_context)

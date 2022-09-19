@@ -315,6 +315,59 @@ class TFAttentionBlock(tf.keras.layers.Layer):
         return hidden_states
 
 
+class TFBasicTransformerBlock(tf.keras.layers.Layer):
+    r"""
+    A basic Transformer block.
+
+    Parameters:
+        dim (:obj:`int`): The number of channels in the input and output.
+        n_heads (:obj:`int`): The number of heads to use for multi-head attention.
+        d_head (:obj:`int`): The number of channels in each head.
+        dropout (:obj:`float`, *optional*, defaults to 0.0): The dropout probability to use.
+        context_dim (:obj:`int`, *optional*): The size of the context vector for cross attention.
+        gated_ff (:obj:`bool`, *optional*, defaults to :obj:`False`): Whether to use a gated feed-forward network.
+        checkpoint (:obj:`bool`, *optional*, defaults to :obj:`False`): Whether to use checkpointing.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        n_heads: int,
+        d_head: int,
+        dropout=0.0,
+        context_dim: Optional[int] = None,
+        gated_ff: bool = True,
+        checkpoint: bool = True,
+    ):
+        super().__init__()
+        self.attn1 = TFCrossAttention(
+            query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout, name="attn1"
+        )  # is a self-attention
+        self.ff = TFFeedForward(dim, dropout=dropout, glu=gated_ff, name="ff")
+        self.attn2 = TFCrossAttention(
+            query_dim=dim, context_dim=context_dim, heads=n_heads, dim_head=d_head, dropout=dropout, name="attn2"
+        )  # is self-attn if context is none
+        self.norm1 = tf.keras.layers.LayerNormalization(epsilon=1e-05, name="norm1")
+        self.norm2 = tf.keras.layers.LayerNormalization(epsilon=1e-05, name="norm2")
+        self.norm3 = tf.keras.layers.LayerNormalization(epsilon=1e-05, name="norm3")
+        # TODO: Remove
+        self.checkpoint = checkpoint
+
+    def _set_attention_slice(self, slice_size):
+        self.attn1._slice_size = slice_size
+        self.attn2._slice_size = slice_size
+
+    def call(self, hidden_states, context=None):
+        # TODO: Remove
+        if isinstance(hidden_states, dict):
+            hidden_states, context = hidden_states["hidden_states"], hidden_states["context"]
+
+        hidden_states = self.attn1(self.norm1(hidden_states)) + hidden_states
+        hidden_states = self.attn2(self.norm2(hidden_states), context=context) + hidden_states
+        hidden_states = self.ff(self.norm3(hidden_states)) + hidden_states
+        return hidden_states
+
+
 class TFCrossAttention(tf.keras.layers.Layer):
     r"""
     A cross attention layer.
@@ -329,9 +382,9 @@ class TFCrossAttention(tf.keras.layers.Layer):
     """
 
     def __init__(
-        self, query_dim: int, context_dim: Optional[int] = None, heads: int = 8, dim_head: int = 64, dropout: int = 0.0
+        self, query_dim: int, context_dim: Optional[int] = None, heads: int = 8, dim_head: int = 64, dropout: int = 0.0, **kwargs
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         inner_dim = dim_head * heads
         context_dim = context_dim if context_dim is not None else query_dim
 
@@ -365,9 +418,9 @@ class TFCrossAttention(tf.keras.layers.Layer):
         return tensor
 
     def call(self, hidden_states, context=None, mask=None):
-        # TODO: Remove once ready
-        if context is None:
-            return
+        # TODO: Remove
+        if isinstance(hidden_states, dict):
+            hidden_states, context = hidden_states["hidden_states"], hidden_states["context"]
 
         batch_size, sequence_length, dim = hidden_states.shape
 
