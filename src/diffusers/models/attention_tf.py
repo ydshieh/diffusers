@@ -315,6 +315,76 @@ class TFAttentionBlock(tf.keras.layers.Layer):
         return hidden_states
 
 
+class TFSpatialTransformer(tf.keras.layers.Layer):
+    """
+    Transformer block for image-like data. First, project the input (aka embedding) and reshape to b, t, d. Then apply
+    standard transformer action. Finally, reshape to image.
+
+    Parameters:
+        in_channels (:obj:`int`): The number of channels in the input and output.
+        n_heads (:obj:`int`): The number of heads to use for multi-head attention.
+        d_head (:obj:`int`): The number of channels in each head.
+        depth (:obj:`int`, *optional*, defaults to 1): The number of layers of Transformer blocks to use.
+        dropout (:obj:`float`, *optional*, defaults to 0.1): The dropout probability to use.
+        context_dim (:obj:`int`, *optional*): The number of context dimensions to use.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        n_heads: int,
+        d_head: int,
+        depth: int = 1,
+        dropout: float = 0.0,
+        num_groups: int = 32,
+        context_dim: Optional[int] = None,
+    ):
+        super().__init__()
+        self.n_heads = n_heads
+        self.d_head = d_head
+        self.in_channels = in_channels
+        inner_dim = n_heads * d_head
+        self.norm = TFGroupNormalization(groups=num_groups, epsilon=1e-6, center=True, scale=True, name="norm")
+
+        self.proj_in = tf.keras.layers.Conv2D(filters=inner_dim, kernel_size=1, strides=1, padding="VALID", name="proj_in")
+
+        self.transformer_blocks = []
+        for d in range(depth):
+            self.transformer_blocks.append(
+                TFBasicTransformerBlock(
+                    dim=inner_dim,
+                    n_heads=n_heads,
+                    d_head=d_head,
+                    dropout=dropout,
+                    context_dim=context_dim,
+                    name=f"transformer_blocks_._{d}"
+                )
+            )
+
+        self.proj_out = tf.keras.layers.Conv2D(filters=in_channels, kernel_size=1, strides=1, padding="VALID", name="proj_out")
+
+    def _set_attention_slice(self, slice_size):
+        for block in self.transformer_blocks:
+            block._set_attention_slice(slice_size)
+
+    def call(self, hidden_states, context=None):
+        # TODO: Remove
+        if isinstance(hidden_states, dict):
+            hidden_states, context = hidden_states["hidden_states"], hidden_states["context"]
+
+        # note: if no context is given, cross-attention defaults to self-attention
+        batch, height, weight, channel = hidden_states.shape
+        residual = hidden_states
+        hidden_states = self.norm(hidden_states)
+        hidden_states = self.proj_in(hidden_states)
+        hidden_states = tf.reshape(hidden_states, shape=(batch, height * weight, -1))
+        for block in self.transformer_blocks:
+            hidden_states = block(hidden_states, context=context)
+        hidden_states = tf.reshape(hidden_states, shape=(batch, height, weight, -1))
+        hidden_states = self.proj_out(hidden_states)
+        return hidden_states + residual
+
+
 class TFBasicTransformerBlock(tf.keras.layers.Layer):
     r"""
     A basic Transformer block.
@@ -338,8 +408,9 @@ class TFBasicTransformerBlock(tf.keras.layers.Layer):
         context_dim: Optional[int] = None,
         gated_ff: bool = True,
         checkpoint: bool = True,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.attn1 = TFCrossAttention(
             query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout, name="attn1"
         )  # is a self-attention
