@@ -384,10 +384,10 @@ class TFCrossAttention(tf.keras.layers.Layer):
 
         # attention, what we cannot get enough of
 
-        # if self._slice_size is None or query.shape[0] // self._slice_size == 1:
-        hidden_states = self._attention(query, key, value)
-        # else:
-        #     hidden_states = self._sliced_attention(query, key, value, sequence_length, dim)
+        if self._slice_size is None or query.shape[0] // self._slice_size == 1:
+            hidden_states = self._attention(query, key, value)
+        else:
+            hidden_states = self._sliced_attention(query, key, value, sequence_length, dim)
 
         for layer in self.to_out:
             hidden_states = layer(hidden_states)
@@ -403,26 +403,28 @@ class TFCrossAttention(tf.keras.layers.Layer):
         hidden_states = self.reshape_batch_dim_to_heads(hidden_states)
         return hidden_states
 
-    # def _sliced_attention(self, query, key, value, sequence_length, dim):
-    #     batch_size_attention = query.shape[0]
-    #     hidden_states = torch.zeros(
-    #         (batch_size_attention, sequence_length, dim // self.heads), device=query.device, dtype=query.dtype
-    #     )
-    #     slice_size = self._slice_size if self._slice_size is not None else hidden_states.shape[0]
-    #     for i in range(hidden_states.shape[0] // slice_size):
-    #         start_idx = i * slice_size
-    #         end_idx = (i + 1) * slice_size
-    #         attn_slice = torch.matmul(query[start_idx:end_idx], key[start_idx:end_idx].transpose(1, 2)) * self.scale
-    #         attn_slice = attn_slice.softmax(dim=-1)
-    #         attn_slice = torch.matmul(attn_slice, value[start_idx:end_idx])
-    #
-    #         hidden_states[start_idx:end_idx] = attn_slice
-    #
-    #     # reshape hidden_states
-    #     hidden_states = self.reshape_batch_dim_to_heads(hidden_states)
-    #     return hidden_states
+    def _sliced_attention(self, query, key, value, sequence_length, dim):
+        batch_size_attention = query.shape[0]
+        # TODO: Use a buffer
+        all_attn_slice = []
 
-        
+        slice_size = self._slice_size if self._slice_size is not None else batch_size_attention
+        for i in range(batch_size_attention // slice_size):
+            start_idx = i * slice_size
+            end_idx = (i + 1) * slice_size
+            attn_slice = tf.matmul(query[start_idx:end_idx], tf.transpose(key[start_idx:end_idx], perm=(0, 2, 1))) * self.scale
+            attn_slice = tf.math.softmax(attn_slice, axis=-1)
+            attn_slice = tf.matmul(attn_slice, value[start_idx:end_idx])
+
+            all_attn_slice.append(attn_slice)
+
+        hidden_states = tf.concat(all_attn_slice, axis=0)
+
+        # reshape hidden_states
+        hidden_states = self.reshape_batch_dim_to_heads(hidden_states)
+        return hidden_states
+
+
 class TFFeedForward(tf.keras.layers.Layer):
     r"""
     A feed-forward layer.

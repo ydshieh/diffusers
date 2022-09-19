@@ -134,3 +134,37 @@ class TFCrossAttentionTest(unittest.TestCase):
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+    def test_pt_tf_with_sliced_attention(self):
+        N, T_query, T_context, query_dim, context_dim, heads, dim_head = (2, 5, 3, 8, 4, 2, 8)
+
+        sample = np.random.default_rng().standard_normal(size=(N, T_query, query_dim), dtype=np.float32)
+        context = np.random.default_rng().standard_normal(size=(N, T_context, context_dim), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample, dtype=torch.float32)
+        tf_sample = tf.constant(sample)
+
+        pt_context = torch.tensor(context, dtype=torch.float32)
+        tf_context = tf.constant(context)
+
+        pt_layer = CrossAttention(query_dim=query_dim, context_dim=context_dim, heads=heads, dim_head=dim_head)
+        tf_layer = TFCrossAttention(query_dim=query_dim, context_dim=context_dim, heads=heads, dim_head=dim_head)
+
+        # Use sliced attention
+        pt_layer._slice_size = 1
+        tf_layer._slice_size = 1
+
+        # init. TF weights
+        _ = tf_layer(tf_sample, context=tf_context)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample, context=pt_context)
+        tf_output = tf_layer(tf_sample, context=tf_context)
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
