@@ -339,8 +339,9 @@ class TFSpatialTransformer(tf.keras.layers.Layer):
         dropout: float = 0.0,
         num_groups: int = 32,
         context_dim: Optional[int] = None,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.n_heads = n_heads
         self.d_head = d_head
         self.in_channels = in_channels
