@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 
 
+import numpy as np
 import tensorflow as tf
 
 from .attention_tf import TFAttentionBlock, TFSpatialTransformer
-from .resnet_tf import TFUpsample2D, TFDownsample2D, TFResnetBlock2D
+from .resnet_tf import TFUpsample2D, TFDownsample2D, TFResnetBlock2D, TFFirDownsample2D
 
 
 class TFDownBlock2D(tf.keras.layers.Layer):
@@ -256,6 +257,92 @@ class TFCrossAttnDownBlock2D(tf.keras.layers.Layer):
             output_states += (hidden_states,)
 
         return hidden_states, output_states
+
+
+class TFSkipDownBlock2D(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        temb_channels: int,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_pre_norm: bool = True,
+        output_scale_factor=np.sqrt(2.0),
+        add_downsample=True,
+        downsample_padding=1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.resnets = []
+
+        for i in range(num_layers):
+            in_channels = in_channels if i == 0 else out_channels
+            self.resnets.append(
+                TFResnetBlock2D(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    temb_channels=temb_channels,
+                    eps=resnet_eps,
+                    groups=min(in_channels // 4, 32),
+                    groups_out=min(out_channels // 4, 32),
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                    name=f"resnets_._{i}",
+                )
+            )
+
+        if add_downsample:
+            self.resnet_down = TFResnetBlock2D(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                temb_channels=temb_channels,
+                eps=resnet_eps,
+                groups=min(out_channels // 4, 32),
+                dropout=dropout,
+                time_embedding_norm=resnet_time_scale_shift,
+                non_linearity=resnet_act_fn,
+                output_scale_factor=output_scale_factor,
+                pre_norm=resnet_pre_norm,
+                use_in_shortcut=True,
+                down=True,
+                kernel="fir",
+                name="resnet_down",
+            )
+            self.downsamplers = [TFFirDownsample2D(channels=in_channels, out_channels=out_channels, name=f"downsamplers_._{0}")]
+            self.skip_conv = tf.keras.layers.Conv2D(out_channels, kernel_size=(1, 1), strides=(1, 1), name="skip_conv")
+        else:
+            self.resnet_down = None
+            self.downsamplers = None
+            self.skip_conv = None
+
+    def call(self, hidden_states, temb=None, skip_sample=None):
+        # TODO: Remove
+        if isinstance(hidden_states, dict):
+            hidden_states, temb, skip_sample = hidden_states["hidden_states"], hidden_states["temb"], hidden_states["skip_sample"]
+
+        output_states = ()
+
+        for resnet in self.resnets:
+            hidden_states = resnet(hidden_states, temb)
+            output_states += (hidden_states,)
+
+        if self.downsamplers is not None:
+            hidden_states = self.resnet_down(hidden_states, temb)
+            for downsampler in self.downsamplers:
+                skip_sample = downsampler(skip_sample)
+
+            hidden_states = self.skip_conv(skip_sample) + hidden_states
+
+            output_states += (hidden_states,)
+
+        return hidden_states, output_states, skip_sample
 
 
 class TFUpBlock2D(tf.keras.layers.Layer):
