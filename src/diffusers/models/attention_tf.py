@@ -252,8 +252,9 @@ class TFAttentionBlock(tf.keras.layers.Layer):
         num_groups: int = 32,
         rescale_output_factor: float = 1.0,
         eps: float = 1e-5,
+        **kwargs,
     ):
-        super().__init__()
+        super().__init__(**kwargs)
         self.channels = channels
 
         self.num_heads = channels // num_head_channels if num_head_channels is not None else 1

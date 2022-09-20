@@ -14,6 +14,7 @@
 
 import tensorflow as tf
 
+from .attention_tf import TFAttentionBlock, TFSpatialTransformer
 from .resnet_tf import TFUpsample2D, TFDownsample2D, TFResnetBlock2D
 
 
@@ -66,6 +67,87 @@ class TFDownBlock2D(tf.keras.layers.Layer):
 
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb)
+            output_states += (hidden_states,)
+
+        if self.downsamplers is not None:
+            for downsampler in self.downsamplers:
+                hidden_states = downsampler(hidden_states)
+
+            output_states += (hidden_states,)
+
+        return hidden_states, output_states
+
+
+class TFAttnDownBlock2D(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        temb_channels: int,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_groups: int = 32,
+        resnet_pre_norm: bool = True,
+        attn_num_head_channels=1,
+        attention_type="default",
+        output_scale_factor=1.0,
+        downsample_padding=1,
+        add_downsample=True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.resnets = []
+        self.attentions = []
+
+        self.attention_type = attention_type
+
+        for i in range(num_layers):
+            in_channels = in_channels if i == 0 else out_channels
+            self.resnets.append(
+                TFResnetBlock2D(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    temb_channels=temb_channels,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                    name=f"resnets_._{i}",
+                )
+            )
+            self.attentions.append(
+                TFAttentionBlock(
+                    out_channels,
+                    num_head_channels=attn_num_head_channels,
+                    rescale_output_factor=output_scale_factor,
+                    eps=resnet_eps,
+                    num_groups=resnet_groups,
+                    name=f"attentions_._{i}",
+                )
+            )
+
+        if add_downsample:
+            self.downsamplers = [TFDownsample2D(channels=in_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding, name=f"downsamplers_._{0}")]
+        else:
+            self.downsamplers = None
+
+    def call(self, hidden_states, temb=None):
+        # TODO: Remove
+        if isinstance(hidden_states, dict):
+            hidden_states, temb = hidden_states["hidden_states"], hidden_states["temb"]
+
+        output_states = ()
+
+        for resnet, attn in zip(self.resnets, self.attentions):
+            hidden_states = resnet(hidden_states, temb)
+            hidden_states = attn(hidden_states)
             output_states += (hidden_states,)
 
         if self.downsamplers is not None:
