@@ -571,6 +571,60 @@ class TFSkipDownBlock2D(tf.keras.layers.Layer):
         return hidden_states, output_states, skip_sample
 
 
+class TFDownEncoderBlock2D(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_groups: int = 32,
+        resnet_pre_norm: bool = True,
+        output_scale_factor=1.0,
+        add_downsample=True,
+        downsample_padding=1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.resnets = []
+
+        for i in range(num_layers):
+            in_channels = in_channels if i == 0 else out_channels
+            self.resnets.append(
+                TFResnetBlock2D(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    temb_channels=None,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                    name=f"resnets_._{i}",
+                )
+            )
+
+        if add_downsample:
+            self.downsamplers = [TFDownsample2D(channels=in_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding, name=f"downsamplers_._{0}")]
+        else:
+            self.downsamplers = None
+
+    def call(self, hidden_states):
+        for resnet in self.resnets:
+            hidden_states = resnet(hidden_states, temb=None)
+
+        if self.downsamplers is not None:
+            for downsampler in self.downsamplers:
+                hidden_states = downsampler(hidden_states)
+
+        return hidden_states
+
+
 class TFUpBlock2D(tf.keras.layers.Layer):
 
     def __init__(
@@ -932,3 +986,58 @@ class TFSkipUpBlock2D(tf.keras.layers.Layer):
             hidden_states = self.resnet_up(hidden_states, temb)
 
         return hidden_states, skip_sample
+
+
+class TFUpDecoderBlock2D(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_groups: int = 32,
+        resnet_pre_norm: bool = True,
+        output_scale_factor=1.0,
+        add_upsample=True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.resnets = []
+
+        for i in range(num_layers):
+            input_channels = in_channels if i == 0 else out_channels
+
+            self.resnets.append(
+                TFResnetBlock2D(
+                    in_channels=input_channels,
+                    out_channels=out_channels,
+                    temb_channels=None,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                    name=f"resnets_._{i}",
+                )
+            )
+
+        if add_upsample:
+            self.upsamplers = [TFUpsample2D(out_channels, use_conv=True, out_channels=out_channels, name="upsamplers_._0")]
+        else:
+            self.upsamplers = None
+
+    def call(self, hidden_states):
+        for resnet in self.resnets:
+            hidden_states = resnet(hidden_states, temb=None)
+
+        if self.upsamplers is not None:
+            for upsampler in self.upsamplers:
+                hidden_states = upsampler(hidden_states)
+
+        return hidden_states
