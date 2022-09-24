@@ -96,3 +96,33 @@ class TFTimesteps(tf.keras.layers.Layer):
             downscale_freq_shift=self.downscale_freq_shift,
         )
         return t_emb
+
+
+class TFGaussianFourierProjection(tf.keras.layers.Layer):
+    """Gaussian Fourier embeddings for noise levels."""
+
+    def __init__(self, embedding_size: int = 256, scale: float = 1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.embedding_size = embedding_size
+        self.scale = scale
+
+    def build(self, input_shape):
+
+        init = tf.random.normal(shape=[self.embedding_size]) * self.scale
+        init = tf.constant_initializer(value=init.numpy())
+
+        # TODO: The name scope and the name `weight`.
+        # The strange attribute name `_weight` is to allow a perfect weight loading from PT. This should be cleaned up.
+        self._weight = self.add_weight(shape=(self.embedding_size,), initializer=init, trainable=False, name="weight")
+
+        # to delete later once removed in PT side, or after we add keys to ignore
+        self.W = self.add_weight(shape=(self.embedding_size,), initializer=init, trainable=False, name="W")
+        self.weight = self.W
+
+        super().build(input_shape)
+
+    def call(self, x):
+        x = tf.math.log(x)
+        x_proj = x[:, tf.newaxis] * self.weight[tf.newaxis, :] * 2 * tf.constant(np.pi)
+        out = tf.concat([tf.math.sin(x_proj), tf.math.cos(x_proj)], axis=-1)
+        return out

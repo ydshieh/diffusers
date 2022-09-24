@@ -3,8 +3,8 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.embeddings_tf import TFTimestepEmbedding, TFTimesteps
-from diffusers.models.embeddings import TimestepEmbedding, Timesteps
+from diffusers.models.embeddings_tf import TFTimestepEmbedding, TFTimesteps, TFGaussianFourierProjection
+from diffusers.models.embeddings import TimestepEmbedding, Timesteps, GaussianFourierProjection
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -72,6 +72,37 @@ class TFTimestepsTest(unittest.TestCase):
 
         pt_layer = Timesteps(num_channels=C, flip_sin_to_cos=False, downscale_freq_shift=1)
         tf_layer = TFTimesteps(num_channels=C, flip_sin_to_cos=False, downscale_freq_shift=1)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample)
+        tf_output = tf_layer(tf_sample)
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+
+class TFGaussianFourierProjectionTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+
+        N, embedding_size = (1, 16)
+
+        # Make sure all values >= 1.0 (so the outputs wouldn't be `NaN` neither too large negative values)
+        sample = 1.0 + np.abs(np.random.default_rng().standard_normal(size=(N,), dtype=np.float32))
+
+        pt_sample = torch.tensor(sample)
+        tf_sample = tf.constant(sample)
+
+        pt_layer = GaussianFourierProjection(embedding_size=embedding_size)
+        tf_layer = TFGaussianFourierProjection(embedding_size=embedding_size)
 
         # init. TF weights
         _ = tf_layer(tf_sample)
