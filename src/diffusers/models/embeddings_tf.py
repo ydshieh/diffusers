@@ -79,3 +79,20 @@ class TFTimestepEmbedding(tf.keras.layers.Layer):
 
         sample = self.linear_2(sample)
         return sample
+
+
+class TFTimesteps(tf.keras.layers.Layer):
+    def __init__(self, num_channels: int, flip_sin_to_cos: bool, downscale_freq_shift: float, **kwargs):
+        super().__init__(**kwargs)
+        self.num_channels = num_channels
+        self.flip_sin_to_cos = flip_sin_to_cos
+        self.downscale_freq_shift = downscale_freq_shift
+
+    def call(self, timesteps):
+        t_emb = get_timestep_embedding(
+            timesteps,
+            self.num_channels,
+            flip_sin_to_cos=self.flip_sin_to_cos,
+            downscale_freq_shift=self.downscale_freq_shift,
+        )
+        return t_emb
