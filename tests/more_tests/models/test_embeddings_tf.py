@@ -37,3 +37,26 @@ class TFTimestepEmbeddingTest(unittest.TestCase):
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+
+class TFTimestepsTest(unittest.TestCase):
+
+    # TODO: Test more options
+    def test_pt_tf_get_timestep_embedding(self):
+
+        from diffusers.models.embeddings_tf import get_timestep_embedding as tf_get_timestep_embedding
+        from diffusers.models.embeddings import get_timestep_embedding
+
+        N, embedding_dim = (1, 16)
+
+        sample = np.random.default_rng().standard_normal(size=(N,), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample)
+        tf_sample = tf.constant(sample)
+
+        with torch.no_grad():
+            pt_output = get_timestep_embedding(pt_sample, embedding_dim=embedding_dim)
+        tf_output = tf_get_timestep_embedding(tf_sample, embedding_dim=embedding_dim)
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
