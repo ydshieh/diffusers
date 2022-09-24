@@ -3,8 +3,8 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.unet_blocks_tf import TFUpBlock2D, TFDownBlock2D, TFAttnDownBlock2D, TFAttnUpBlock2D, TFCrossAttnDownBlock2D, TFCrossAttnUpBlock2D, TFSkipDownBlock2D, TFSkipUpBlock2D, TFDownEncoderBlock2D, TFUpDecoderBlock2D
-from diffusers.models.unet_blocks import UpBlock2D, DownBlock2D, AttnDownBlock2D, AttnUpBlock2D, CrossAttnDownBlock2D, CrossAttnUpBlock2D, SkipDownBlock2D, SkipUpBlock2D, DownEncoderBlock2D, UpDecoderBlock2D
+from diffusers.models.unet_blocks_tf import TFUpBlock2D, TFDownBlock2D, TFAttnDownBlock2D, TFAttnUpBlock2D, TFCrossAttnDownBlock2D, TFCrossAttnUpBlock2D, TFSkipDownBlock2D, TFSkipUpBlock2D, TFDownEncoderBlock2D, TFUpDecoderBlock2D, TFAttnDownEncoderBlock2D, TFAttnUpDecoderBlock2D
+from diffusers.models.unet_blocks import UpBlock2D, DownBlock2D, AttnDownBlock2D, AttnUpBlock2D, CrossAttnDownBlock2D, CrossAttnUpBlock2D, SkipDownBlock2D, SkipUpBlock2D, DownEncoderBlock2D, UpDecoderBlock2D, AttnDownEncoderBlock2D, AttnUpDecoderBlock2D
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -209,6 +209,39 @@ class TFDownEncoderBlock2DTest(unittest.TestCase):
 
         pt_layer = DownEncoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
         tf_layer = TFDownEncoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample)
+        tf_output = tf_layer(tf_sample)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+
+class TFAttnDownEncoderBlock2DTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+        N, H, W, C = (1, 32, 32, 3)
+        out_C = 2 * C
+
+        sample = np.random.default_rng().standard_normal(size=(N, C, H, W), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        pt_layer = AttnDownEncoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
+        tf_layer = TFAttnDownEncoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
 
         # init. TF weights
         _ = tf_layer(tf_sample)
@@ -478,6 +511,39 @@ class TFUpDecoderBlock2DTest(unittest.TestCase):
 
         pt_layer = UpDecoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
         tf_layer = TFUpDecoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
+
+        # init. TF weights
+        _ = tf_layer(tf_sample)
+        # Load PT weights
+        tf_layer.base_model_prefix = ""
+        tf_layer._keys_to_ignore_on_load_missing = []
+        tf_layer._keys_to_ignore_on_load_unexpected = []
+        load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+        with torch.no_grad():
+            pt_output = pt_layer(pt_sample)
+        tf_output = tf_layer(tf_sample)
+        # (N, H, W, C) -> (N, C, H, W)
+        tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+        max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+        assert max_diff < 1e-6
+
+
+class TFAttnUpDecoderBlock2DTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+        N, H, W, C = (1, 16, 16, 3)
+        out_C = 2 * C
+
+        sample = np.random.default_rng().standard_normal(size=(N, C, H, W), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        pt_layer = AttnUpDecoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
+        tf_layer = TFAttnUpDecoderBlock2D(in_channels=C, out_channels=out_C, num_layers=2, resnet_groups=C)
 
         # init. TF weights
         _ = tf_layer(tf_sample)
