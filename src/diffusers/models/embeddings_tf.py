@@ -115,7 +115,7 @@ class TFGaussianFourierProjection(tf.keras.layers.Layer):
         # The strange attribute name `_weight` is to allow a perfect weight loading from PT. This should be cleaned up.
         self._weight = self.add_weight(shape=(self.embedding_size,), initializer=init, trainable=False, name="weight")
 
-        # to delete later once removed in PT side, or after we add keys to ignore
+        # TODO: to delete later once removed in PT side, or after we add keys to ignore
         self.W = self.add_weight(shape=(self.embedding_size,), initializer=init, trainable=False, name="W")
         self.weight = self.W
 

@@ -245,6 +245,88 @@ class TFGroupNormalization(tf.keras.layers.Layer):
         return broadcast_shape
 
 
+class TFUNetMidBlock2D(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        in_channels: int,
+        temb_channels: int,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_eps: float = 1e-6,
+        resnet_time_scale_shift: str = "default",
+        resnet_act_fn: str = "swish",
+        resnet_groups: int = 32,
+        resnet_pre_norm: bool = True,
+        attn_num_head_channels=1,
+        attention_type="default",
+        output_scale_factor=1.0,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.attention_type = attention_type
+        resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
+
+        # there is always at least one resnet
+        self.resnets = [
+            TFResnetBlock2D(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                temb_channels=temb_channels,
+                eps=resnet_eps,
+                groups=resnet_groups,
+                dropout=dropout,
+                time_embedding_norm=resnet_time_scale_shift,
+                non_linearity=resnet_act_fn,
+                output_scale_factor=output_scale_factor,
+                pre_norm=resnet_pre_norm,
+                name="resnets_._0",
+            )
+        ]
+        self.attentions = []
+
+        for i in range(num_layers):
+            self.attentions.append(
+                TFAttentionBlock(
+                    in_channels,
+                    num_head_channels=attn_num_head_channels,
+                    rescale_output_factor=output_scale_factor,
+                    eps=resnet_eps,
+                    num_groups=resnet_groups,
+                    name=f"attentions_._{i}",
+                )
+            )
+            self.resnets.append(
+                TFResnetBlock2D(
+                    in_channels=in_channels,
+                    out_channels=in_channels,
+                    temb_channels=temb_channels,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
+                    name=f"resnets_._{i + 1}",
+                )
+            )
+
+    # TODO: Remove logic regarding `encoder_states` once PT side is done.
+    # (`attention_type` is never used, and `AttentionBlock` doesn't accept `encoder_states`)
+    def call(self, hidden_states, temb=None, encoder_states=None):
+        hidden_states = self.resnets[0](hidden_states, temb)
+        for attn, resnet in zip(self.attentions, self.resnets[1:]):
+            if self.attention_type == "default":
+                hidden_states = attn(hidden_states)
+            # TODO: This `else` block should be removed.
+            # else:
+            #     hidden_states = attn(hidden_states, encoder_states)
+            hidden_states = resnet(hidden_states, temb)
+
+        return hidden_states
+
+
 class TFDownBlock2D(tf.keras.layers.Layer):
     def __init__(
         self,

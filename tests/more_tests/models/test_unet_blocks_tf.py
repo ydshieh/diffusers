@@ -3,8 +3,8 @@ import torch
 import tensorflow as tf
 import unittest
 
-from diffusers.models.unet_blocks_tf import TFUpBlock2D, TFDownBlock2D, TFAttnDownBlock2D, TFAttnUpBlock2D, TFCrossAttnDownBlock2D, TFCrossAttnUpBlock2D, TFSkipDownBlock2D, TFSkipUpBlock2D, TFDownEncoderBlock2D, TFUpDecoderBlock2D, TFAttnDownEncoderBlock2D, TFAttnUpDecoderBlock2D
-from diffusers.models.unet_blocks import UpBlock2D, DownBlock2D, AttnDownBlock2D, AttnUpBlock2D, CrossAttnDownBlock2D, CrossAttnUpBlock2D, SkipDownBlock2D, SkipUpBlock2D, DownEncoderBlock2D, UpDecoderBlock2D, AttnDownEncoderBlock2D, AttnUpDecoderBlock2D
+from diffusers.models.unet_blocks_tf import TFUpBlock2D, TFDownBlock2D, TFAttnDownBlock2D, TFAttnUpBlock2D, TFCrossAttnDownBlock2D, TFCrossAttnUpBlock2D, TFSkipDownBlock2D, TFSkipUpBlock2D, TFDownEncoderBlock2D, TFUpDecoderBlock2D, TFAttnDownEncoderBlock2D, TFAttnUpDecoderBlock2D, TFUNetMidBlock2D
+from diffusers.models.unet_blocks import UpBlock2D, DownBlock2D, AttnDownBlock2D, AttnUpBlock2D, CrossAttnDownBlock2D, CrossAttnUpBlock2D, SkipDownBlock2D, SkipUpBlock2D, DownEncoderBlock2D, UpDecoderBlock2D, AttnDownEncoderBlock2D, AttnUpDecoderBlock2D, UNetMidBlock2D
 
 from transformers import load_pytorch_model_in_tf2_model
 
@@ -561,3 +561,49 @@ class TFAttnUpDecoderBlock2DTest(unittest.TestCase):
 
         max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
         assert max_diff < 1e-6
+
+
+class TFUNetMidBlock2DTest(unittest.TestCase):
+
+    def test_pt_tf_default(self):
+        N, H, W, C = (1, 16, 16, 6)
+        temb_channels = 16
+
+        sample = np.random.default_rng().standard_normal(size=(N, C, H, W), dtype=np.float32)
+        temb = np.random.default_rng().standard_normal(size=(N, temb_channels), dtype=np.float32)
+
+        pt_sample = torch.tensor(sample)
+        # (N, C, H, W) -> (N, H, W, C) for TF
+        tf_sample = tf.transpose(tf.constant(sample), perm=(0, 2, 3, 1))
+
+        for _temb_channels in [None, temb_channels]:
+
+            if _temb_channels is None:
+                pt_temb = None
+                tf_temb = None
+            else:
+                pt_temb = torch.tensor(temb, dtype=torch.float32)
+                tf_temb = tf.constant(temb)
+
+            for resnet_groups in [1, C // 2, C]:
+
+                # Strangely, `resnet_groups=C` will give very small PT/TF difference when `time_emb_proj` is not loaded from PT.
+                pt_layer = UNetMidBlock2D(in_channels=C, temb_channels=_temb_channels, num_layers=2, resnet_groups=resnet_groups)
+                tf_layer = TFUNetMidBlock2D(in_channels=C, temb_channels=_temb_channels, num_layers=2, resnet_groups=resnet_groups)
+
+                # init. TF weights
+                _ = tf_layer(tf_sample, temb=tf_temb)
+                # Load PT weights
+                tf_layer.base_model_prefix = ""
+                tf_layer._keys_to_ignore_on_load_missing = []
+                tf_layer._keys_to_ignore_on_load_unexpected = []
+                load_pytorch_model_in_tf2_model(tf_layer, pt_layer, tf_inputs=tf_sample, allow_missing_keys=False)
+
+                with torch.no_grad():
+                    pt_output = pt_layer(pt_sample, temb=pt_temb)
+                tf_output = tf_layer(tf_sample, temb=tf_temb)
+                # (N, H, W, C) -> (N, C, H, W)
+                tf_output = tf.transpose(tf_output, perm=(0, 3, 1, 2))
+
+                max_diff = np.amax(np.abs(pt_output.numpy() - tf_output.numpy()))
+                assert max_diff < 5e-6
